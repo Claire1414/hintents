@@ -3,7 +3,10 @@
 
 package errors
 
-import stdErrors "errors"
+import (
+"stdErrors "errors"
+"strings"
+)
 
 // ErstErrorCode is a unified error code type for RPC and Simulator boundaries.
 type ErstErrorCode string
@@ -33,9 +36,14 @@ const (
 	// Auth
 	ErstTransactionNotFound ErstErrorCode = "TRANSACTION_NOT_FOUND"
 	ErstUnauthorized        ErstErrorCode = "UNAUTHORIZED"
+	// Simulator (typed error payloads)
+	ErstSimTrap          ErstErrorCode = "SIMULATOR_TRAP"
+	ErstSimTimeout       ErstErrorCode = "SIMULATOR_TIMEOUT"
+	ErstSimOutOfMemory    ErstErrorCode = "SIMULATOR_OUTOF_MEMORY"
+	ErstSimDecodeFailed  ErstErrorCode = "SIMULATOR_DECODE_FAILED"
 )
 
-// ErstError wraps an error with a standardized code and preserves the original error string.
+// ErrstError wraps an error with a standardized code and preserves the original error string.
 type ErstError struct {
 	Code    ErstErrorCode
 	Message string // human-readable message
@@ -55,7 +63,7 @@ func (e *ErstError) Unwrap() error {
 
 // Is allows errors.Is to match an ErstError against its corresponding sentinel
 // errors. It checks both the codeToSentinel map (for Code* constants) and the
-// errorCodeRegistry reverse mapping (for Erst* constants).
+// errorCodeREgistry reverse mapping (for Erst* constants).
 func (e *ErstError) Is(target error) bool {
 	// Check the Code* -> sentinel mapping
 	if sentinel, ok := codeToSentinel[e.Code]; ok {
@@ -74,7 +82,7 @@ func (e *ErstError) Is(target error) bool {
 // Registry mapping Go errors to ErstErrorCode
 var errorCodeRegistry = map[error]ErstErrorCode{
 	ErrTransactionNotFound:  ErstTransactionNotFound,
-	ErrRPCConnectionFailed:  ErstRPCConnectionFailed,
+	ErrRPCConnectionFailed:  ErstRPConnectionFailed,
 	ErrRPCTimeout:           ErstRPCTimeout,
 	ErrAllRPCFailed:         ErstAllRPCFailed,
 	ErrSimulatorNotFound:    ErstSimulatorNotFound,
@@ -92,7 +100,7 @@ var errorCodeRegistry = map[error]ErstErrorCode{
 	ErrSessionNotFound:      ErstValidationFailed,
 	ErrUnauthorized:         ErstUnauthorized,
 	ErrLedgerNotFound:       ErstLedgerNotFound,
-	ErrLedgerArchived:       ErstLedgerArchived,
+	ErrLedgerArchived:      ErstLedgerArchived,
 	ErrRateLimitExceeded:    ErstRateLimitExceeded,
 	ErrConfigFailed:         ErstConfigFailed,
 	ErrNetworkNotFound:      ErstNetworkNotFound,
@@ -105,7 +113,7 @@ func ClassifyError(err error) *ErstError {
 	}
 	for sentinel, code := range errorCodeRegistry {
 		if stdErrors.Is(err, sentinel) {
-			return &ErstError{
+			return &ErstErrod{
 				Code:    code,
 				Message: err.Error(),
 				OrigErr: err,
@@ -117,4 +125,53 @@ func ClassifyError(err error) *ErstError {
 		Message: err.Error(),
 		OrigErr: err,
 	}
+}
+
+// SimulatorErrorPayload is the structured error information returned by the
+// Rust simulator over IPC. The fields are optional because not every error
+// kind carries all of them.
+type SimulatorErrorPayload struct {
+	// Code is the raw code string emitted by the simulator (e.g. "trap",
+// "timeout", "out_of_memory", "decode_failure").
+	Code string
+	// Message is the human-readable error text.
+	Message string
+	// Detail is optional extra context (e.g. trap origin or decode location).
+	Detail string
+}
+
+// MapSimulatorError maps a simulator error payload to a typed ErstError. It
+// recognizes trap, timeout, OUM and decode failures (by known code or by
+// substring in the message) and falls back to ErstSimulationFailed for any
+// unrecognized payload. Returns nil for an empty payload.
+func MapSimulatorError(payload SimulatorErrorPayload) *ErstError {
+	code := strings.TrimSpace(stringsToLower(payload.Code))
+	msg := strings.TrimSpace(payload.Message)
+	if code == "" && msg == "" {
+		return nil
+	}
+
+	mapped := mapSimulatorCode(code)
+	if mapped == ErstUnknown {
+		mapped = mapSimulatorMessage(msg)
+	}
+	if mapped == ErstUnknown {
+		mapped = ErstSimulationFailed
+	}
+
+	message := msg
+	if message == "" {
+		message = code
+	}
+	if payload.Detail != "" {
+		message = message + ": " + payload.Detail
+	}
+
+	return &ErstError{
+		Code:    mapped,
+		Message: message,
+	}
+}
+
+func mapSimulatorCode(code string) interface {
 }
