@@ -4,8 +4,8 @@
 package errors
 
 import (
-"stdErrors "errors"
-"strings"
+	stdErrors "errors"
+	"strings"
 )
 
 // ErstErrorCode is a unified error code type for RPC and Simulator boundaries.
@@ -39,11 +39,11 @@ const (
 	// Simulator (typed error payloads)
 	ErstSimTrap          ErstErrorCode = "SIMULATOR_TRAP"
 	ErstSimTimeout       ErstErrorCode = "SIMULATOR_TIMEOUT"
-	ErstSimOutOfMemory    ErstErrorCode = "SIMULATOR_OUTOF_MEMORY"
+	ErstSimOutOfMemory   ErstErrorCode = "SIMULATOR_OUT_OF_MEMORY"
 	ErstSimDecodeFailed  ErstErrorCode = "SIMULATOR_DECODE_FAILED"
 )
 
-// ErrstError wraps an error with a standardized code and preserves the original error string.
+// ErstError wraps an error with a standardized code and preserves the original error string.
 type ErstError struct {
 	Code    ErstErrorCode
 	Message string // human-readable message
@@ -63,7 +63,7 @@ func (e *ErstError) Unwrap() error {
 
 // Is allows errors.Is to match an ErstError against its corresponding sentinel
 // errors. It checks both the codeToSentinel map (for Code* constants) and the
-// errorCodeREgistry reverse mapping (for Erst* constants).
+// errorCodeRegistry reverse mapping (for Erst* constants).
 func (e *ErstError) Is(target error) bool {
 	// Check the Code* -> sentinel mapping
 	if sentinel, ok := codeToSentinel[e.Code]; ok {
@@ -82,7 +82,7 @@ func (e *ErstError) Is(target error) bool {
 // Registry mapping Go errors to ErstErrorCode
 var errorCodeRegistry = map[error]ErstErrorCode{
 	ErrTransactionNotFound:  ErstTransactionNotFound,
-	ErrRPCConnectionFailed:  ErstRPConnectionFailed,
+	ErrRPCConnectionFailed:  ErstRPCConnectionFailed,
 	ErrRPCTimeout:           ErstRPCTimeout,
 	ErrAllRPCFailed:         ErstAllRPCFailed,
 	ErrSimulatorNotFound:    ErstSimulatorNotFound,
@@ -100,7 +100,7 @@ var errorCodeRegistry = map[error]ErstErrorCode{
 	ErrSessionNotFound:      ErstValidationFailed,
 	ErrUnauthorized:         ErstUnauthorized,
 	ErrLedgerNotFound:       ErstLedgerNotFound,
-	ErrLedgerArchived:      ErstLedgerArchived,
+	ErrLedgerArchived:       ErstLedgerArchived,
 	ErrRateLimitExceeded:    ErstRateLimitExceeded,
 	ErrConfigFailed:         ErstConfigFailed,
 	ErrNetworkNotFound:      ErstNetworkNotFound,
@@ -113,7 +113,7 @@ func ClassifyError(err error) *ErstError {
 	}
 	for sentinel, code := range errorCodeRegistry {
 		if stdErrors.Is(err, sentinel) {
-			return &ErstErrod{
+			return &ErstError{
 				Code:    code,
 				Message: err.Error(),
 				OrigErr: err,
@@ -132,7 +132,7 @@ func ClassifyError(err error) *ErstError {
 // kind carries all of them.
 type SimulatorErrorPayload struct {
 	// Code is the raw code string emitted by the simulator (e.g. "trap",
-// "timeout", "out_of_memory", "decode_failure").
+	// "timeout", "out_of_memory", "decode_failure").
 	Code string
 	// Message is the human-readable error text.
 	Message string
@@ -141,11 +141,11 @@ type SimulatorErrorPayload struct {
 }
 
 // MapSimulatorError maps a simulator error payload to a typed ErstError. It
-// recognizes trap, timeout, OUM and decode failures (by known code or by
+// recognizes trap, timeout, OOM and decode failures (by known code or by
 // substring in the message) and falls back to ErstSimulationFailed for any
 // unrecognized payload. Returns nil for an empty payload.
 func MapSimulatorError(payload SimulatorErrorPayload) *ErstError {
-	code := strings.TrimSpace(stringsToLower(payload.Code))
+	code := strings.ToLower(strings.TrimSpace(payload.Code))
 	msg := strings.TrimSpace(payload.Message)
 	if code == "" && msg == "" {
 		return nil
@@ -173,5 +173,37 @@ func MapSimulatorError(payload SimulatorErrorPayload) *ErstError {
 	}
 }
 
-func mapSimulatorCode(code string) interface {
+// mapSimulatorCode maps a raw, lowercased simulator code to a typed code.
+// It returns ErstUnknown when the code is not recognized.
+func mapSimulatorCode(code string) ErstErrorCode {
+	switch code {
+	case "trap":
+		return ErstSimTrap
+	case "timeout":
+		return ErstSimTimeout
+	case "out_of_memory", "oom":
+		return ErstSimOutOfMemory
+	case "decode_failure", "decode_failed", "decode":
+		return ErstSimDecodeFailed
+	}
+	return ErstUnknown
+}
+
+// mapSimulatorMessage derives a typed code from a free-form error message.
+// It returns ErstUnknown when no known signature is present.
+func mapSimulatorMessage(msg string) ErstErrorCode {
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "out of memory"), strings.Contains(lower, "oom"),
+		strings.Contains(lower, "memory limit exceeded"), strings.Contains(lower, "exceeded memory"):
+		return ErstSimOutOfMemory
+	case strings.Contains(lower, "timeout"), strings.Contains(lower, "timed out"):
+		return ErstSimTimeout
+	case strings.Contains(lower, "trap"), strings.Contains(lower, "panic"):
+		return ErstSimTrap
+	case strings.Contains(lower, "decode"), strings.Contains(lower, "decoding failed"),
+		strings.Contains(lower, "invalid response"):
+		return ErstSimDecodeFailed
+	}
+	return ErstUnknown
 }

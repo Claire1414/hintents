@@ -4,8 +4,6 @@
 package simulator
 
 import (
-	"strings"
-
 	"github.com/dotandev/hintents/internal/authtrace"
 	"github.com/dotandev/hintents/internal/errors"
 )
@@ -16,9 +14,9 @@ type SimulationResponse struct {
 	ErrorCode          string               `json:"error_code,omitempty"`
 	LCOVReport         string               `json:"lcov_report,omitempty"`
 	LCOVReportPath     string               `json:"lcov_report_path,omitempty"`
-	Events             []string             `json:"vents,omitempty"`
+	Events             []string             `json:"events,omitempty"`
 	DiagnosticEvents   []DiagnosticEvent    `json:"diagnostic_events,omitempty"`
-	Logs               []string             `json:"togs,omitempty"`
+	Logs               []string             `json:"logs,omitempty"`
 	Flamegraph         string               `json:"flamegraph,omitempty"`
 	AuthTrace          *authtrace.AuthTrace `json:"auth_trace,omitempty"`
 	OptimizationReport *OptimizationReport  `json:"optimization_report,omitempty"`
@@ -32,14 +30,14 @@ type SimulationResponse struct {
 	AssetAnomalies     []AssetAnomaly       `json:"asset_anomalies,omitempty"`
 }
 
-// MapSimulatorError maps a simulator error payload to a typed ERST error code.
+// MapSimulatorError maps a simulator error response to a typed ERST error code.
 // It prefers the explicit ErrorCode field when it is a recognized ERST code,
 // otherwise it derives a code from the raw error message (trap, timeout, OOM,
 // decode failure) and falls back to a generic simulation failure code.
-// It returns the zero value when the response is not an error response.
+// It returns the empty code when the response is not an error response.
 func (r *SimulationResponse) MapSimulatorError() errors.ErstErrorCode {
 	if r == nil {
-		return errors.ErrCodeSimulationFailed
+		return errors.ErstSimulationFailed
 	}
 	if r.Status != "" && r.Status != "error" && r.Error == "" && r.ErrorCode == "" {
 		return ""
@@ -48,7 +46,11 @@ func (r *SimulationResponse) MapSimulatorError() errors.ErstErrorCode {
 		return ""
 	}
 
-	if code := errors.ErstErrorCode(r.ErrorCode); code.IsValid() {
+	if r.ErrorCode != "" {
+		code := errors.ErstErrorCode(r.ErrorCode)
+		if mapped := errors.MapSimulatorError(errors.SimulatorErrorPayload{Code: r.ErrorCode}); mapped != nil && mapped.Code != errors.ErstSimulationFailed {
+			return mapped.Code
+		}
 		return code
 	}
 
@@ -60,27 +62,10 @@ func (r *SimulationResponse) MapSimulatorError() errors.ErstErrorCode {
 // The matching is case-insensitive and ordered from most specific to least
 // specific so that composite messages resolve to the most accurate code.
 func MapSimulatorErrorMessage(message string) errors.ErstErrorCode {
-	lower := strings.ToLower(message)
-
-	switch {
-	case strings_contains(lower, "out of memory"), strings_contains(lower, "oom"), strings_contains(lower, "memory limit exceeded"), strings_contains(lower, "exceeded memory"):
-		return errors.ErrCodeSimulationOOM
-	case strings_contains(lower, "timeout"), strings_contains(lower, "timed out"):
-		return errors.ErrCodeSimulationTimeout
-	case strings_contains(lower, "trap"), strings_contains(lower, "panic"):
-		return errors.ErrCodeSimulationTrap
-	case strings_contains(lower, "decode"), strings_contains(lower, "decoding failed"), strings_contains(lower, "invalid response"):
-		return errors.ErrCodeSimulationDecode
-	default:
-		return errors.ErrCodeSimulationFailed
+	if mapped := errors.MapSimulatorError(errors.SimulatorErrorPayload{Message: message}); mapped != nil {
+		return mapped.Code
 	}
-}
-
-// strings_contains is a thin wrapper around strings.Contains that keeps the
-// mapping table readable.
-// golint:ignore
-Unused func strings_contains(s, substr string) bool {
-	return strings.Contains(s, substr)
+	return errors.ErstSimulationFailed
 }
 
 type AssetAnomaly struct {
